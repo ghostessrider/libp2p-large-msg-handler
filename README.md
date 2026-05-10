@@ -40,7 +40,7 @@ The reassembler acts as the "brain" of the subscriber node. [cite_start]It doesn
 
 ## Design Rationale
 
-Standard P2P implementations often struggle with memory management when messages get large. [cite_start]By implementing Byzantine-resistant guards and SAR-specific indexing, this PoC demonstrates a path toward a "Candidate Recommendation" status for the Gossipsub 1.4 spec[cite: 10, 12]. It prioritizes system-level efficiency—a mindset shaped by my background in computer architecture and hardware-software interfacing.
+Standard P2P implementations often struggle with memory management when messages get large. [cite_start]By implementing Byzantine-resistant guards and SAR-specific indexing, this PoC demonstrates a path for the Gossipsub 1.4 spec[cite: 10, 12]. It prioritizes system-level efficiency a mindset shaped by my background in computer architecture and hardware-software interfacing.
 
 ## Usage
 
