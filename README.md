@@ -1,8 +1,8 @@
-# Gossipsub 1.4: Large Message SAR Simulation
+# Large Message SAR Simulation
 
-[cite_start]This project is a technical Proof of Concept (PoC) for the Segmentation-Reassembly (SAR) model proposed in the libp2p Gossipsub 1.4 Candidate Recommendation[cite: 11, 12].
+[cite_start]This project is a technical Proof of Concept (PoC) for the Segmentation-Reassembly (SAR) model proposed in the libp2p Gossipsub 1.4 .
 
-As an Electrical Engineering student at IIT Bhilai, I developed this simulation to explore the mechanics of decentralized large-payload dissemination. [cite_start]The focus is on maintaining node stability and data integrity in high-churn environments where packet loss and out-of-order delivery are the norms rather than exceptions[cite: 1, 4].
+I developed this simulation to explore the mechanics of decentralized large-payload dissemination. [cite_start]The focus is on maintaining node stability and data integrity in high-churn environments where packet loss and out-of-order delivery are the norms rather than exceptions[cite: 1, 4].
 
 ---
 
