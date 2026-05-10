@@ -1,0 +1,155 @@
+// v1_4_spec.proto — Gossipsub 1.4 Large-Message Wire Format
+//
+// Protocol Buffers (proto3) schema formalising the SegmentEnvelope
+// structure used by the Segmentation-Reassembly (SAR) layer described
+// in the libp2p Gossipsub 1.4 Candidate Recommendation.
+//
+// Cross-Language Validation Intent
+// ─────────────────────────────────
+// This schema is the canonical interchange contract between:
+//
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  Python  (segmenter.py / reassembler.py)                    │
+//   │    → reference implementation; produces & validates msgs    │
+//   │                                                             │
+//   │  Nim     (e.g. libp2p/gossip_sar.nim)                       │
+//   │    → performance-critical mesh node; must decode identical  │
+//   │      binary wire format without ambiguity                   │
+//   │                                                             │
+//   │  Go      (go-libp2p-pubsub integration target)              │
+//   │    → production router; reuses existing RPC protobuf stack  │
+//   └─────────────────────────────────────────────────────────────┘
+//
+// Any implementation in any language that can encode/decode this
+// schema is guaranteed to interoperate at the wire level.
+//
+// Code Generation
+// ───────────────
+//   # Python (protobuf >= 3.20)
+//   protoc --python_out=. v1_4_spec.proto
+//
+//   # Go
+//   protoc --go_out=. v1_4_spec.proto
+//
+//   # Nim (nim-protobuf-serialization)
+//   protoc --nim_out=. v1_4_spec.proto
+//
+// Zero-Dependency Note
+// ────────────────────
+// The simulation (segmenter.py, reassembler.py, demo.py) does NOT
+// use protobuf at runtime — it serialises via Python dataclasses for
+// stdlib purity.  This .proto file is the *specification artefact*
+// that documents the intended wire format for production integrations.
+
+syntax = "proto3";
+
+package gossipsub.v1_4;
+
+option go_package = "github.com/libp2p/go-libp2p-pubsub/gossipsub/v1_4";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SegmentEnvelope
+//
+// Immutable, self-describing unit carrying one chunk of a large message
+// through the gossip mesh.
+//
+// Every field except `payload` is deliberately duplicated in every envelope
+// belonging to the same logical message.  This makes each chunk self-sufficient:
+// a subscriber can determine the expected total, the parent message, and its
+// own position from *any single received envelope*, without out-of-band metadata
+// or an ordered channel — critical in gossip overlays where the first received
+// chunk may arrive at any index.
+// ─────────────────────────────────────────────────────────────────────────────
+message SegmentEnvelope {
+
+  // Globally unique identifier for the parent logical message.
+  // UUID v4 formatted as a lowercase hyphenated string:
+  //   "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+  // All segments belonging to the same message share an identical msg_id.
+  // Receivers use this field to route arriving segments into the correct
+  // reassembly buffer (multiple concurrent messages may be in-flight).
+  string msg_id = 1;
+
+  // Total number of *primary* (non-parity) segments the original payload
+  // was split into.  Allows a subscriber to:
+  //   1. Pre-allocate a buffer of this size.
+  //   2. Detect completion: received_count == total_segments → reassemble.
+  //   3. Compute the missing set: {0..total_segments-1} − received.
+  // Must be > 0 and ≤ MAX_SEGMENTS_PER_MSG (enforced by the Reassembler).
+  uint32 total_segments = 2;
+
+  // Zero-based position of this chunk within the ordered segment stream.
+  // For primary data segments: 0 ≤ segment_index < total_segments.
+  // For parity segments:       segment_index ≥ total_segments.
+  // The Reassembler uses this field as the insertion key in its buffer map,
+  // enabling correct in-order reconstruction regardless of arrival order.
+  uint32 segment_index = 3;
+
+  // Hex-encoded SHA-256 digest of the *raw bytes of this segment's payload*.
+  // Enables per-segment integrity validation on receipt (Tier 1 check),
+  // before the full reassembly SHA-256 comparison (Tier 2 check).
+  // A mismatch causes the segment to be discarded and added to the missing
+  // set, triggering a selective IWANT re-fetch.
+  // Format: 64 lowercase hex characters (256-bit digest).
+  string payload_hash = 4;
+
+  // Raw binary chunk of the original large message payload.
+  // Fixed size for all primary segments (configurable, default 512 bytes),
+  // except the final segment which may be shorter.
+  // Parity segments carry an XOR of a window of primary chunks — their
+  // length equals the maximum primary segment size (zero-padded before XOR).
+  bytes payload = 5;
+
+  // True when this envelope carries an XOR parity chunk rather than primary
+  // data.  Parity segments are produced by the Segmenter when redundancy_factor
+  // > 0 and allow reconstruction of lost primary segments without a full
+  // IWANT round-trip, reducing reassembly latency under packet loss.
+  // The Reassembler's gap analysis ignores parity envelopes (they are not
+  // counted toward total_segments).
+  bool is_parity = 6;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SegmentBatch
+//
+// Optional container for batching multiple envelopes in a single RPC call.
+// Reduces per-message framing overhead when the transport supports batching.
+// The Gossipsub router may use this to coalesce segments before forwarding
+// to mesh peers, improving throughput at the cost of a small latency increase.
+// ─────────────────────────────────────────────────────────────────────────────
+message SegmentBatch {
+  repeated SegmentEnvelope envelopes = 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IWantSegments
+//
+// Control message sent by a subscriber to request specific missing segments.
+// Mirrors the Gossipsub IHAVE/IWANT lazy-pull mechanism, specialised for
+// the SAR layer.  A subscriber sends this after gap analysis reveals missing
+// indices, targeting peers known (via IHAVE) to hold those chunks.
+// ─────────────────────────────────────────────────────────────────────────────
+message IWantSegments {
+  // The message for which segments are being requested.
+  string msg_id = 1;
+
+  // Sorted list of missing segment_index values.
+  // The recipient should respond with a SegmentBatch containing these indices.
+  repeated uint32 missing_indices = 2;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReconstructFail
+//
+// Emitted by a subscriber's SAR engine when reassembly cannot complete within
+// the configured deadline (STALE_TTL_SECONDS) or after max retries are
+// exhausted.  Signals to the application layer that this message is lost and
+// the buffer has been evicted.  Observability systems should monitor this
+// message to track mesh health under high churn.
+// ─────────────────────────────────────────────────────────────────────────────
+message ReconstructFail {
+  string msg_id           = 1;
+  repeated uint32 missing = 2;   // indices still absent at eviction time
+  uint64 eviction_epoch   = 3;   // Unix timestamp (seconds) of eviction
+  string reason           = 4;   // "stale_ttl" | "max_retries_exceeded" | "dos_guard"
+}
